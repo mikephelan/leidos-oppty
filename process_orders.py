@@ -10,6 +10,7 @@ import logging
 import sys
 from pathlib import Path
 from datetime import datetime
+from typing import Union
 
 from order_processor.pdf_extractor import PDFExtractor
 from order_processor.citation_parser import CitationParser
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def process_order_pdf(
     pdf_path: str,
-    order_number: str | None = None,
+    order_number: Union[str,None] = None,
     db_path: str = "data/cfr_orders.db"
 ) -> bool:
     """
