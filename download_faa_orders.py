@@ -23,10 +23,10 @@ def create_download_directory():
         os.makedirs(DOWNLOAD_DIR)
         print(f"Created directory: {DOWNLOAD_DIR}")
 
-def get_order_links(url):
+def get_document_info_links(url):
     """
-    Scrape the FAA orders page and extract PDF download links.
-    Returns a list of tuples: (order_name, pdf_url)
+    Scrape the FAA orders listing page and extract document information page links.
+    Returns a list of tuples: (order_name, info_page_url)
     """
     print(f"Fetching order list from: {url}")
     
@@ -43,20 +43,49 @@ def get_order_links(url):
     
     soup = BeautifulSoup(response.content, 'html.parser')
     
-    # Find all PDF links - adjust selectors based on actual page structure
-    pdf_links = []
+    # Find all document information links
+    doc_links = []
     
-    # Look for links containing 'pdf' or ending with .pdf
+    # Look for links to document.information pages
     for link in soup.find_all('a', href=True):
         href = link['href']
-        if '.pdf' in href.lower() or 'pdf' in href.lower():
+        if 'document.information' in href and 'documentID' in href:
             full_url = urljoin(url, href)
-            # Get link text or use filename as name
-            name = link.get_text(strip=True) or os.path.basename(href)
-            pdf_links.append((name, full_url))
+            # Get link text as the order name
+            name = link.get_text(strip=True)
+            if name and full_url not in [url for _, url in doc_links]:
+                doc_links.append((name, full_url))
     
-    print(f"Found {len(pdf_links)} potential PDF links")
-    return pdf_links
+    print(f"Found {len(doc_links)} document information pages")
+    return doc_links
+
+def get_pdf_url_from_info_page(info_url):
+    """
+    Visit a document information page and extract the PDF download URL.
+    Returns the PDF URL or None if not found.
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    }
+    
+    try:
+        response = requests.get(info_url, headers=headers, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"      Error fetching info page: {e}")
+        return None
+    
+    soup = BeautifulSoup(response.content, 'html.parser')
+    
+    # Look for PDF links in the document information page
+    for link in soup.find_all('a', href=True):
+        href = link['href']
+        if href.endswith('.pdf'):
+            # Make sure it's an absolute URL
+            pdf_url = urljoin(info_url, href)
+            return pdf_url
+    
+    return None
 
 def sanitize_filename(filename):
     """Remove or replace characters that are invalid in filenames."""
@@ -133,31 +162,43 @@ def main():
     # Create download directory
     create_download_directory()
     
-    # Get list of PDF links
-    pdf_links = get_order_links(BASE_URL)
+    # Step 1: Get list of document information page links
+    doc_info_links = get_document_info_links(BASE_URL)
     
-    if not pdf_links:
-        print("No PDF links found. The page structure may have changed.")
+    if not doc_info_links:
+        print("No document information links found. The page structure may have changed.")
         print("Please check the URL and update the script if needed.")
         return
     
     # Limit to MAX_DOWNLOADS
-    pdf_links = pdf_links[:MAX_DOWNLOADS]
-    print(f"\nWill attempt to download {len(pdf_links)} PDFs")
+    doc_info_links = doc_info_links[:MAX_DOWNLOADS]
+    print(f"\nWill attempt to process {len(doc_info_links)} orders")
     print()
     
-    # Download each PDF
+    # Step 2: Visit each document info page to get PDF URLs and download
     successful = 0
     failed = 0
+    skipped = 0
     
-    for i, (name, url) in enumerate(pdf_links, 1):
-        if download_pdf(name, url, i):
-            successful += 1
+    for i, (name, info_url) in enumerate(doc_info_links, 1):
+        print(f"[{i}] Processing: {name}")
+        print(f"      Info page: {info_url}")
+        
+        # Get the PDF URL from the document information page
+        pdf_url = get_pdf_url_from_info_page(info_url)
+        
+        if not pdf_url:
+            print(f"      Warning: No PDF link found on info page")
+            skipped += 1
         else:
-            failed += 1
+            print(f"      PDF URL: {pdf_url}")
+            if download_pdf(name, pdf_url, i):
+                successful += 1
+            else:
+                failed += 1
         
         # Rate limiting - be respectful to the server
-        if i < len(pdf_links):
+        if i < len(doc_info_links):
             time.sleep(DELAY_BETWEEN_REQUESTS)
     
     # Summary
@@ -167,7 +208,8 @@ def main():
     print("=" * 70)
     print(f"Successful: {successful}")
     print(f"Failed: {failed}")
-    print(f"Total: {successful + failed}")
+    print(f"Skipped (no PDF): {skipped}")
+    print(f"Total processed: {successful + failed + skipped}")
     print(f"Files saved to: {os.path.abspath(DOWNLOAD_DIR)}")
     print()
 
